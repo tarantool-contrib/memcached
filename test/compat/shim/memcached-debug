@@ -1,0 +1,45 @@
+#!/bin/sh
+# A stand-in for memcached's memcached-debug binary, so that memcached's own
+# t/*.t tests (t/lib/MemcachedTest.pm) run against tarantool-contrib/memcached.
+#
+# memcached_t_test.lua copies this file into a temporary build directory
+# next to a copy of memcached's t/ and its timedrun helper, replacing
+# @MCC_ROOT@ with the repository root. MemcachedTest.pm runs
+#   $builddir/timedrun 600 $builddir/memcached-debug <args>
+# and probes features through `memcached-debug -h`.
+#
+# Environment: MCC_ROOT (repository root), MCC_TARANTOOL (default tarantool).
+
+MCC_ROOT=${MCC_ROOT:-@MCC_ROOT@}
+
+for a in "$@"; do
+    case "$a" in
+    -h|--help)
+        # MemcachedTest.pm greps this text: it must not mention unix-socket,
+        # sasl, ext_path, proxy_config, enable-ssl or no_drop_privileges, so
+        # that the tests use TCP and skip the features contrib lacks.
+        cat <<'EOF'
+memcached 1.6.21-mcc (tarantool-contrib/memcached behind the memcached-debug shim)
+-p, --port=<num>          TCP port to listen on (default: 11211)
+-l, --listen=<addr>       interface to listen on (default: 127.0.0.1)
+-c, --conn-limit=<num>    max simultaneous connections (default: 4096)
+-I, --max-item-size=<num> max value size, k/m suffixes (default: 1m)
+Every other memcached option is accepted and ignored.
+Debug commands: debugtime <seconds>|p|r.
+EOF
+        exit 0
+        ;;
+    -V|--version)
+        echo "memcached 1.6.21-mcc"
+        exit 0
+        ;;
+    esac
+done
+
+# The sources first, then the tree tt builds (tt test, tt package build):
+# the C data path and memcached/version.lua.
+rocks=$MCC_ROOT/.rocks
+LUA_PATH="$MCC_ROOT/?.lua;$MCC_ROOT/?/init.lua;$rocks/share/tarantool/?.lua;$rocks/share/tarantool/?/init.lua;${LUA_PATH:-;}"
+LUA_CPATH="$rocks/lib/tarantool/?.so;${LUA_CPATH:-;;}"
+export LUA_PATH LUA_CPATH
+exec "${MCC_TARANTOOL:-tarantool}" "$MCC_ROOT/test/compat/shim/shim.lua" "$@"

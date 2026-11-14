@@ -1,0 +1,10 @@
+.rocks/
+*.snap
+*.xlog
+*.vylog
+*.log
+/tmp/
+*.so
+*.o
+_build/
+.tarantool/

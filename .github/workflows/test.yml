@@ -1,0 +1,56 @@
+# Lint and the unit and integration tests on Tarantool 3.9 with tt v3: tt
+# builds the package (the C data path) and installs the dev dependencies of
+# app.manifest.toml by its lock into .rocks.
+name: test
+
+on:
+  # master and the release tags; a branch is tested by its pull request.
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        tarantool: ['3.9']
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      # The C data path is built with warnings, as errors.
+      CFLAGS: -O2 -g -Wall -Wextra -Werror
+    steps:
+      - uses: actions/checkout@v4
+
+      # tarantool and tarantool-dev (module.h for the C data path).
+      - uses: tarantool/setup-tarantool@v4
+        with:
+          tarantool-version: ${{ matrix.tarantool }}
+
+      - uses: ./.github/actions/tt
+
+      # The dev dependencies as the lock pins them, and the package.
+      - name: tt package build
+        run: tt package build --locked
+
+      - name: luacheck
+        run: .rocks/bin/luacheck memcached roles test bench
+
+      - name: luafmt
+        run: tt emmylua fmt
+
+      - name: tt test
+        run: tt test test/unit test/integration -- -v
+
+      - name: tt test, Lua engine only
+        env:
+          MEMCACHED_DATAPATH: lua
+        run: tt test test/unit test/integration -- -v

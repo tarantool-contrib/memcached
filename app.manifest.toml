@@ -1,0 +1,63 @@
+# The package for tt v3: tt package build, tt test and tt package pack read
+# it. The rockspec of a rock is generated from it. See CONTRIBUTING.md.
+manifest_version = "0.1"
+
+[package]
+name = "memcached"
+description = "memcached text and meta protocol server for Tarantool 3"
+license = "BSD-2-Clause"
+license_files = ["LICENSE"]
+repository = "https://github.com/tarantool-contrib/memcached"
+
+[platform]
+# Application threads, the threads module, read views and the role's
+# per-instance health checks.
+tarantool = ">=3.9.0"
+tt = ">=3.0.0"
+
+# No runtime dependencies. vshard, for the vshard backend, is optional and
+# installed by the application (README.md, Requirements).
+[dependencies]
+
+# The tests and the lint. backend/vshard.lua relies on vshard 1.0.0
+# internals (DESIGN.md).
+[dev_dependencies]
+luatest = "==1.4.5"
+vshard = "==1.0.0"
+checks = "==3.4.1"
+luacheck = "==0.25.0"
+# tt emmylua check and fmt (tt emmylua prepare wrote it); not enforced yet.
+emmylua ={ version = "0.30.0pre1", registry = "https://raw.githubusercontent.com/tarantool-contrib/rocks-repo/index/" }
+
+# The modules memcached and memcached.*: every Lua file under memcached/,
+# and the C data path, memcached.datapath (.rocks/lib/tarantool/memcached/
+# datapath.so). Only *.lua is laid out, so no .so left in the source tree
+# gets into the rock.
+[components.memcached]
+path = "memcached"
+include = ["*.lua"]
+
+[components.memcached.build]
+backend = "lua-c"
+module = "datapath"
+# cloop.c: the C connection loop, on datapath.h.
+sources = ["datapath.c", "cloop.c"]
+
+# The thread transport, memcached.ipc (.rocks/lib/tarantool/memcached/
+# ipc.so): the raw batch of the front-ends in application threads goes to
+# TX through its shared-memory queues instead of threads.call. Optional,
+# like the data path: without it the threads use threads.call.
+[components.ipc]
+path = "memcached"
+namespace = "memcached"
+include = []
+
+[components.ipc.build]
+backend = "lua-c"
+module = "ipc"
+sources = ["ipc.c"]
+
+# The role, roles.memcached.
+[components.roles]
+path = "roles"
+namespace = "roles"

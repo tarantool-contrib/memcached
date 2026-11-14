@@ -1,0 +1,69 @@
+# The differential compat suite (test/compat) against memcached 1.6.45, in
+# the compat image: scenarios, a short fuzz and memcached's own t/*.t tests.
+# A manual run can ask for a longer fuzz.
+name: compat
+
+on:
+  # master and the release tags; a branch is tested by its pull request.
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      fuzz_iters:
+        description: Fuzz steps per seed (300 in the regular runs)
+        default: '300'
+      fuzz_seeds:
+        description: Fuzz seeds, comma separated
+        default: '1,2,3'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compat:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      MCC_IMAGE: mcc-compat:3.9
+      MCC_COMPAT_FUZZ_ITERS: ${{ inputs.fuzz_iters || '300' }}
+      MCC_COMPAT_FUZZ_SEED: ${{ inputs.fuzz_seeds || '1,2,3' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/tt
+        id: tt
+
+      # test/compat/Dockerfile is built on the dev image. The dev image takes
+      # the tt the action cached (docker/Dockerfile, TT_IMAGE) instead of
+      # building it.
+      - name: Build the dev image
+        env:
+          TT: ${{ steps.tt.outputs.path }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/tt-image"
+          cp "$TT" "$RUNNER_TEMP/tt-image/tt"
+          printf 'FROM scratch\nCOPY tt /usr/local/bin/tt\n' |
+            docker build -t mcc-tt -f - "$RUNNER_TEMP/tt-image"
+          docker build --build-arg TT_IMAGE=mcc-tt -t mcc-dev:3.9 docker
+
+      - name: Build the compat image
+        run: docker build -t mcc-compat:3.9 test/compat
+
+      # The dev dependencies as the lock pins them, and the package with the
+      # C data path, into .rocks.
+      - name: tt package build
+        run: docker/run.sh 'tt package build --locked'
+
+      - name: luacheck
+        run: docker/run.sh '.rocks/bin/luacheck test/compat'
+
+      - name: Compat suite
+        run: >-
+          docker/run.sh
+          "MCC_COMPAT_FUZZ_ITERS=$MCC_COMPAT_FUZZ_ITERS
+          MCC_COMPAT_FUZZ_SEED=$MCC_COMPAT_FUZZ_SEED
+          tt test test/compat -- -v -c"

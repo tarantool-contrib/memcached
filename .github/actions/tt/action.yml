@@ -1,0 +1,42 @@
+# tt v3 on PATH: built from tarantool/tt at the commit of docker/tt-commit
+# with docker/tt-build.sh and the Go of its go.mod, and cached by that
+# commit, so that a job builds it only when the pin moves.
+name: tt v3
+description: tt v3 at the commit pinned in docker/tt-commit, cached by it
+outputs:
+  path:
+    description: The tt binary
+    value: ${{ steps.path.outputs.path }}
+runs:
+  using: composite
+  steps:
+    - id: commit
+      shell: bash
+      run: echo "commit=$(cat docker/tt-commit)" >> "$GITHUB_OUTPUT"
+
+    - id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.local/tt-v3
+        key: tt-v3-${{ steps.commit.outputs.commit }}-${{ runner.os }}-${{ runner.arch }}
+
+    - if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: docker/tt-build.sh fetch "$RUNNER_TEMP/tt-src"
+
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: ${{ runner.temp }}/tt-src/go.mod
+        cache-dependency-path: ${{ runner.temp }}/tt-src/go.sum
+
+    - if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: docker/tt-build.sh build "$RUNNER_TEMP/tt-src" "$HOME/.local/tt-v3/tt"
+
+    - id: path
+      shell: bash
+      run: |
+        echo "$HOME/.local/tt-v3" >> "$GITHUB_PATH"
+        echo "path=$HOME/.local/tt-v3/tt" >> "$GITHUB_OUTPUT"
+        "$HOME/.local/tt-v3/tt" version

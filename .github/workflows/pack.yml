@@ -1,0 +1,62 @@
+# The rocks: tt package pack makes the binary rock and the source rock of
+# the package, with the rockspec it generates from app.manifest.toml. A new
+# project then installs the binary rock, and another one the source rock
+# alone, which tt builds; every module of the checkout must load from the
+# rock there and serve a set and a get (test/rock/consumer.sh).
+name: pack
+
+on:
+  # master and the release tags; a branch is tested by its pull request.
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pack:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The version is that of the v* tags (git describe).
+          fetch-depth: 0
+
+      # tarantool and tarantool-dev (module.h for the C data path).
+      - uses: tarantool/setup-tarantool@v4
+        with:
+          tarantool-version: '3.9'
+
+      - uses: ./.github/actions/tt
+
+      - name: tt package pack
+        run: |
+          tt package pack --locked --format rock,rock-src --out "$RUNNER_TEMP/dist"
+          cd "$RUNNER_TEMP/dist"
+          ls -l
+          cat memcached-*.rockspec
+          unzip -l memcached-*.linux-x86_64.rock
+
+      - name: Install the binary rock
+        env:
+          MCC_ROCK: binary
+        run: test/rock/consumer.sh "$RUNNER_TEMP/dist"
+
+      # A server with the source rock only.
+      - name: Install the source rock
+        env:
+          MCC_ROCK: src
+        run: |
+          tt package pack --locked --format rock-src --out "$RUNNER_TEMP/dist-src"
+          test/rock/consumer.sh "$RUNNER_TEMP/dist-src"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rocks
+          path: ${{ runner.temp }}/dist

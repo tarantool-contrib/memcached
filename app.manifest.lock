@@ -1,0 +1,40 @@
+lock_version = '0.1'
+manifest_version = '0.1'
+generated_by = 'tt 3.0.0-alpha.2'
+manifest_hash = 'toml1-sha256:677c9ebf8024c25d7753ddc6824f6ae5a3c71563dc3e7aa80819db868be226fa'
+
+[lock]
+[lock.products]
+[lock.products.default]
+dependencies = []
+
+[[lock.dev_dependencies]]
+name = 'checks'
+version = '3.4.1-1'
+source = 'registry'
+
+[[lock.dev_dependencies]]
+name = 'emmylua'
+version = '0.30.0pre1-1'
+source = 'registry'
+artifacts = {linux-aarch64 = 'sha256:5f07190cb5949e5da1d09712824dc0f330a565a20016b069b0f74ddda6314522', linux-x86_64 = 'sha256:5131fddf81eea270d68e7186ff3d084e3c6f315899c00f5b42aeba71d6c3d04e', macosx-aarch64 = 'sha256:946935dc2bec9a334ddb6651d90d10802d0bc7c0a98572912402ea0f915a0055', rockspec = 'sha256:6f618252c2c966e25629ea1fc6c843c59dd459cc420295bcc739bfd7533bc366'}
+
+[[lock.dev_dependencies]]
+name = 'argparse'
+version = '0.6.0-1'
+source = 'registry'
+
+[[lock.dev_dependencies]]
+name = 'luacheck'
+version = '0.25.0-1'
+source = 'registry'
+
+[[lock.dev_dependencies]]
+name = 'luatest'
+version = '1.4.5-1'
+source = 'registry'
+
+[[lock.dev_dependencies]]
+name = 'vshard'
+version = '1.0.0-1'
+source = 'registry'

@@ -1,0 +1,30 @@
+#!/bin/sh
+# memcached-debug for a reference run (MCC_COMPAT_T_REFERENCE): execs a real
+# memcached binary. memcached_t_test.lua copies this file into the build
+# directory, replacing @REF@ with the binary.
+#
+# MemcachedTest.pm always passes "-o relaxed_privileges", which older
+# releases (1.6.21) reject: drop it when the binary doesn't know it.
+REF=@REF@
+if "$REF" -h 2>/dev/null | grep -q relaxed_privileges; then
+    exec "$REF" "$@"
+fi
+pending=
+for a do
+    shift
+    if [ -n "$pending" ]; then
+        pending=
+        if [ "$a" = relaxed_privileges ]; then
+            continue
+        fi
+        set -- "$@" -o
+    elif [ "$a" = -o ]; then
+        pending=1
+        continue
+    fi
+    set -- "$@" "$a"
+done
+if [ -n "$pending" ]; then
+    set -- "$@" -o
+fi
+exec "$REF" "$@"

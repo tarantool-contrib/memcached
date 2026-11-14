@@ -1,0 +1,36 @@
+# The style of the code, checked in CI (tt emmylua fmt, which has luafmt
+# parse LuaJIT): 4 spaces, 80 columns, no spaces inside braces, trailing
+# commas in multi-line tables, no alignment. A call, a table or a parameter
+# list that doesn't fit gets one element per line, and a broken `and`/`or`/
+# `..` chain one operand per line, the operator first (luafmt has no packed
+# or aligned layout).
+#
+# Unknown keys are ignored silently. Don't set the *_expand options to
+# "Never": luafmt then breaks the line between a function and its
+# parenthesized arguments, which LuaJIT rejects as ambiguous syntax, and
+# ignores max_line_width for tables.
+[indent]
+kind = "Space"
+width = 4
+
+[layout]
+max_line_width = 80
+prefer_call_args_layout_from_source = true
+prefer_table_layout_from_source = true
+prefer_binary_chain_operand_per_line = true
+
+[output]
+trailing_comma = "Multiline"
+
+[spacing]
+space_inside_braces = false
+space_before_lambda_func_paren = false
+
+[comments]
+align_line_comments = false
+align_in_table_fields = false
+align_in_call_args = false
+align_in_params = false
+
+[align]
+table_field = false
