@@ -15,12 +15,14 @@
  *   indexes, so a push never finds a ring full: back-pressure is a call
  *   that finds no free slot (IPC_UNAVAILABLE, the caller uses
  *   threads.call);
- * - an eventfd per ring for the consumer's wakeups. A consumer that finds
- *   its ring empty sets the ring's armed flag, checks the ring again and
- *   waits on the eventfd (coio_wait()); a producer writes the eventfd only
- *   if it clears the armed flag after its push (seq_cst fences on both
- *   sides: one of them sees the other's store). So a busy consumer costs
- *   its producer no system call, and one wakeup drains everything.
+ * - a wakeup per ring for its consumer: an eventfd on Linux, a pipe
+ *   elsewhere (macOS has no eventfd; IPC_WAKEUP_PIPE picks the pipe on
+ *   Linux too, for the tests). A consumer that finds its ring empty sets
+ *   the ring's armed flag, checks the ring again and waits on the wakeup
+ *   (coio_wait()); a producer signals the wakeup only if it clears the
+ *   armed flag after its push (seq_cst fences on both sides: one of them
+ *   sees the other's store). So a busy consumer costs its producer no
+ *   system call, and one wakeup drains everything.
  *
  * The producers and the consumers are fibers: the fibers of a thread on
  * its side (the connections push, a receiver fiber pops), the fibers of a
@@ -39,7 +41,7 @@
  * never will be, so the thread may send it again by threads.call. The
  * memory is freed when both references are dropped.
  *
- * Only module.h, the Lua C API, libc, pthreads and eventfd.
+ * Only module.h, the Lua C API, libc, pthreads and eventfd or pipe().
  */
 #include <errno.h>
 #include <pthread.h>
@@ -48,8 +50,15 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/eventfd.h>
 #include <unistd.h>
+
+#if defined(__linux__) && !defined(IPC_WAKEUP_PIPE)
+#include <sys/eventfd.h>
+#define IPC_EVENTFD 1
+#else
+#include <fcntl.h>
+#define IPC_EVENTFD 0
+#endif
 
 #include <lua.h>
 #include <lauxlib.h>
@@ -142,7 +151,12 @@ struct ipc_ring {
 	_Alignas(64) _Atomic uint64_t head;
 	/* The consumer waits (or is about to) on efd. */
 	_Alignas(64) _Atomic int armed;
+	/*
+	 * The wakeup: the consumer waits on efd, the producer writes wfd.
+	 * The same eventfd, or the read and the write end of a pipe.
+	 */
 	int efd;
+	int wfd;
 	uint32_t mask;
 	uint32_t *items;
 };
@@ -180,9 +194,43 @@ static struct ipc_chan *registry;
 static uint64_t next_id = 1;
 static _Atomic int64_t live_channels;
 
+#if IPC_EVENTFD
+static int
+wakeup_create(struct ipc_ring *r)
+{
+	r->efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+	r->wfd = r->efd;
+	return r->efd < 0 ? -1 : 0;
+}
+#else
+static int
+fd_set_flags(int fd)
+{
+	int fl = fcntl(fd, F_GETFL);
+	if (fl < 0 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0)
+		return -1;
+	return fcntl(fd, F_SETFD, FD_CLOEXEC);
+}
+
+static int
+wakeup_create(struct ipc_ring *r)
+{
+	int fds[2];
+	if (pipe(fds) != 0)
+		return -1;
+	r->efd = fds[0];
+	r->wfd = fds[1];
+	if (fd_set_flags(fds[0]) != 0 || fd_set_flags(fds[1]) != 0)
+		return -1;
+	return 0;
+}
+#endif
+
 static void
 ring_destroy(struct ipc_ring *r)
 {
+	if (r->wfd >= 0 && r->wfd != r->efd)
+		close(r->wfd);
 	if (r->efd >= 0)
 		close(r->efd);
 	free(r->items);
@@ -199,8 +247,7 @@ ring_create(struct ipc_ring *r, uint32_t nslots)
 	atomic_init(&r->armed, 0);
 	r->mask = cap - 1;
 	r->items = calloc(cap, sizeof(*r->items));
-	r->efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-	if (r->items == NULL || r->efd < 0)
+	if (r->items == NULL || wakeup_create(r) != 0)
 		return -1;
 	return 0;
 }
@@ -227,8 +274,8 @@ chan_new(uint32_t nslots)
 	if (posix_memalign((void **)&c, 64, sizeof(*c)) != 0)
 		return NULL;
 	memset(c, 0, sizeof(*c));
-	c->req.efd = -1;
-	c->done.efd = -1;
+	c->req.efd = c->req.wfd = -1;
+	c->done.efd = c->done.wfd = -1;
 	atomic_fetch_add(&live_channels, 1);
 	c->magic = IPC_MAGIC;
 	c->abi = IPC_ABI;
@@ -298,24 +345,41 @@ chan_find(uint64_t id)
 
 /* The rings --------------------------------------------------------------- */
 
+/*
+ * Wake the consumer of r up. A full pipe (EAGAIN) has a wakeup pending
+ * already.
+ */
 static void
-efd_signal(int efd)
+ring_signal(struct ipc_ring *r)
 {
+#if IPC_EVENTFD
 	uint64_t one = 1;
+#else
+	char one = 1;
+#endif
 	ssize_t rc;
 	do {
-		rc = write(efd, &one, sizeof(one));
+		rc = write(r->wfd, &one, sizeof(one));
 	} while (rc < 0 && errno == EINTR);
 }
 
+/* The consumer: drop the pending wakeups of r. */
 static void
-efd_clear(int efd)
+ring_clear(struct ipc_ring *r)
 {
+#if IPC_EVENTFD
 	uint64_t v;
 	ssize_t rc;
 	do {
-		rc = read(efd, &v, sizeof(v));
+		rc = read(r->efd, &v, sizeof(v));
 	} while (rc < 0 && errno == EINTR);
+#else
+	char buf[64];
+	ssize_t rc;
+	do {
+		rc = read(r->efd, buf, sizeof(buf));
+	} while (rc == (ssize_t)sizeof(buf) || (rc < 0 && errno == EINTR));
+#endif
 }
 
 static bool
@@ -335,7 +399,7 @@ ring_push(struct ipc_ring *r, uint32_t idx)
 	atomic_thread_fence(memory_order_seq_cst);
 	if (atomic_load_explicit(&r->armed, memory_order_relaxed) &&
 	    atomic_exchange(&r->armed, 0))
-		efd_signal(r->efd);
+		ring_signal(r);
 }
 
 /* The consumer: the next index, or NO_SLOT. */
@@ -352,7 +416,7 @@ ring_pop(struct ipc_ring *r)
 
 /*
  * The consumer: wait up to timeout seconds for a push (or a signal of
- * efd), unless the ring is not empty or *flag == value. Yields.
+ * wakeup), unless the ring is not empty or *flag == value. Yields.
  */
 static void
 ring_wait(struct ipc_ring *r, _Atomic int *flag, int value, double timeout)
@@ -364,7 +428,7 @@ ring_wait(struct ipc_ring *r, _Atomic int *flag, int value, double timeout)
 		return;
 	}
 	coio_wait(r->efd, COIO_READ, timeout);
-	efd_clear(r->efd);
+	ring_clear(r);
 	atomic_store(&r->armed, 0);
 }
 
@@ -443,7 +507,7 @@ push_handle(lua_State *L, struct ipc_chan *c, const char *mt)
 /*
  * Drop the thread's reference once the channel is closed, no fiber waits
  * in call() (the abandoned slots need nothing of the thread) and the
- * receiver doesn't wait on its eventfd, which the last reference closes.
+ * receiver doesn't wait on its wakeup, which the last reference closes.
  */
 static void
 thread_maybe_release(struct handle *h)
@@ -723,8 +787,8 @@ chan_close(lua_State *L)
 	if (c == NULL)
 		return 0;
 	if (!atomic_exchange(&c->closed, 1)) {
-		efd_signal(c->req.efd);
-		efd_signal(c->done.efd);
+		ring_signal(&c->req);
+		ring_signal(&c->done);
 	}
 	thread_maybe_release(h);
 	return 0;
@@ -763,7 +827,7 @@ thread_gc(lua_State *L)
 		return 0;
 	/* No fiber waits: a waiting fiber holds the handle. */
 	if (!atomic_exchange(&c->closed, 1))
-		efd_signal(c->req.efd);
+		ring_signal(&c->req);
 	h->chan = NULL;
 	chan_unref(c);
 	return 0;
@@ -990,7 +1054,7 @@ tx_detach(struct handle *h)
 		return;
 	h->chan = NULL;
 	atomic_store(&c->tx_state, TX_GONE);
-	efd_signal(c->done.efd);
+	ring_signal(&c->done);
 	chan_unref(c);
 }
 

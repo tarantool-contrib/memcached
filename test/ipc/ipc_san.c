@@ -1,10 +1,11 @@
 /*
- * Sanitizer harness for memcached/ipc.c: the rings, the slots, the eventfd
+ * Sanitizer harness for memcached/ipc.c: the rings, the slots, the
  * wakeups and the channel lifetime between two pthreads (the thread side
  * and TX) and a third that takes and drops references, outside Tarantool
  * (whose fiber stacks the sanitizers don't follow). It includes ipc.c and
  * runs its static functions; the Lua and box functions are never called,
- * coio_wait() is poll(). See CONTRIBUTING.md "The C data path":
+ * coio_wait() is poll(). -DIPC_WAKEUP_PIPE runs the pipe wakeups of macOS
+ * instead of the eventfd ones. See CONTRIBUTING.md "The C data path":
  *
  *   gcc -O1 -g -fsanitize=thread -I/usr/include/tarantool -pthread \
  *       test/ipc/ipc_san.c -o /tmp/ipc_san \
@@ -71,7 +72,7 @@ server(void *arg)
 		ring_push(&c->done, idx);
 	}
 	atomic_store(&c->tx_state, TX_GONE);
-	efd_signal(c->done.efd);
+	ring_signal(&c->done);
 	chan_unref(c);
 	return NULL;
 }
@@ -153,7 +154,7 @@ main(void)
 	}
 	assert(sum == want_sum);
 	atomic_store(&c->closed, 1);
-	efd_signal(c->req.efd);
+	ring_signal(&c->req);
 	pthread_join(tx, NULL);
 	atomic_store(&stop_finder, 1);
 	pthread_join(fd, NULL);

@@ -52,6 +52,14 @@
 
 #include "datapath.h"
 
+/*
+ * macOS may have no MSG_NOSIGNAL. Tarantool ignores SIGPIPE anyway, so a
+ * send() to a closed peer fails with EPIPE there too.
+ */
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+
 /* Tarantool's TIMEOUT_INFINITY, which module.h doesn't have. */
 #define FOREVER (365 * 86400 * 100.0)
 

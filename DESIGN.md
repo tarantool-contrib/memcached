@@ -1890,10 +1890,12 @@ The option `vshard = {router, timeout}`:
     no free slot. The producers and consumers are fibers of one thread on
     each side; a push or a pop doesn't yield, so each side is one producer
     and one consumer as the rings see it.
-  - **Wakeups.** An `eventfd` per ring. A consumer that finds its ring
-    empty sets the ring's `armed` flag, checks again and waits on the
-    eventfd (`coio_wait()`); a producer writes the eventfd only if it
-    clears `armed` after its push (seq_cst fences on both sides). A busy
+  - **Wakeups.** An `eventfd` per ring on Linux, a non-blocking pipe on
+    macOS, which has no eventfd (a byte per wakeup, the consumer reads them
+    all; `-DIPC_WAKEUP_PIPE` picks it on Linux for the tests). A consumer
+    that finds its ring empty sets the ring's `armed` flag, checks again
+    and waits on the wakeup (`coio_wait()`); a producer signals it only if
+    it clears `armed` after its push (seq_cst fences on both sides). A busy
     consumer costs no system call, and a wakeup drains everything there
     is.
   - **The thread's side** (`backend/thread.lua` "The channel"). The first
@@ -1934,7 +1936,7 @@ The option `vshard = {router, timeout}`:
     requests, then detaches (`TX_GONE`). TX detaches only when none of its
     fibers holds a slot, so a request TX didn't take never will be: the
     thread sends it by `threads.call`. The thread keeps its reference while
-    a connection waits in a call or the receiver waits on its eventfd. A
+    a connection waits in a call or the receiver waits on its wakeup. A
     connection cancelled while it waits leaves its slot to the receiver
     (the request still runs in TX, as with `threads.call`). If TX's pool is
     cancelled, its last fiber detaches; the thread drops the channel and

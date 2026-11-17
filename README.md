@@ -45,6 +45,12 @@ yet; the first release will be the tag `v0.1.0`. See
 
 - Tarantool 3.9 or newer: application threads, the `threads` module and
   read views are used, and the role's per-instance health checks need 3.9.
+- Linux or macOS. On macOS `SO_REUSEPORT` lets every application thread
+  listen on the port but doesn't spread the connections over them, so the
+  front-ends of an instance with `threads` serve all of them in one thread
+  (they work, but don't scale with the threads); `reuseport` servers in
+  separate processes are the same. Linux is the production platform; the
+  benchmarks (`bench/`) and the compat suite run there only.
 - [vshard](https://github.com/tarantool/vshard), only for the vshard
   backend: vshard 1.x from 1.0.0 (`>= 1.0.0, < 2.0.0`), tested with 1.0.0.
   The backend relies on some vshard internals, so with a version outside
@@ -887,7 +893,9 @@ bench/run.sh                             # the whole matrix, ~50 min
   `vshard.util`'s load-time check; a thread router is never dropped.
 - **Threads:** unix sockets and port 0 are not supported with `threads`; one
   cross-thread call per batch with the local backend, two when other
-  commands follow the classic gets and sets at its head.
+  commands follow the classic gets and sets at its head. On macOS the
+  connections are not spread over the threads (see
+  [Requirements](#requirements)).
 - **Role:** recreating an instance keeps its old space and data.
 - **`stats`** has no per-slab or per-item details (`stats items`, `stats
   slabs`).

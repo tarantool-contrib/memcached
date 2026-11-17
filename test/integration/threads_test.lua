@@ -141,7 +141,11 @@ g.test_served_by_threads = function(cg)
         t.assert(id >= 1 and id <= NTHREADS)
         nused = nused + 1
     end
-    t.assert_ge(nused, 2, 'the connections are spread over the threads')
+    -- macOS's SO_REUSEPORT lets the threads bind the port but doesn't
+    -- spread the connections over them (README.md, Requirements).
+    if jit.os ~= 'OSX' then
+        t.assert_ge(nused, 2, 'the connections are spread over the threads')
+    end
 
     -- TX doesn't listen and has never accepted a connection.
     t.assert_equals(
