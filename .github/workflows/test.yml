@@ -134,7 +134,10 @@ jobs:
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_INSTALL_PREFIX="$HOME/.local/tarantool" \
             -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
-          cmake --build "$RUNNER_TEMP/tarantool-build"
+          # The install takes the EmmyLua stubs, which only an ENABLE_DIST
+          # build makes by default (cmake/LuaAnnotations.cmake).
+          cmake --build "$RUNNER_TEMP/tarantool-build" --target all \
+            emmylua-stubs
           cmake --install "$RUNNER_TEMP/tarantool-build"
 
       - name: Tarantool on PATH
