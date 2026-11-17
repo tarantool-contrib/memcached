@@ -119,19 +119,25 @@ do the same before pushing a change of the C file.
 - The C code uses only `module.h` (the box C API) and the Lua C API, no
   FFI declarations: a hot reload must be able to require it again.
 - `memcached/ipc.c`, the channels between the application threads and TX
-  (DESIGN.md "Application threads"), also uses libc, pthreads and eventfd.
+  (DESIGN.md "Application threads"), also uses libc, pthreads and eventfd
+  (a pipe on macOS, or with `-DIPC_WAKEUP_PIPE`).
   Its process-wide state must survive a second `luaopen` (a reload). A
   change of its messages or functions bumps `IPC_ABI` there,
   `threads.IPC_ABI` and the one in `backend/thread.lua`. Without the `.so`
   the threads use `threads.call`; `threads_test.lua` covers both. The
   rings, slots and lifetime also run outside Tarantool under the
-  sanitizers, with `test/ipc/ipc_san.c` (TSAN needs ASLR off, so a
-  container without the default seccomp profile):
+  sanitizers, with `test/ipc/ipc_san.c`, for both wakeups
+  (`test/ipc/san.sh`; TSAN needs ASLR off, so a container without the
+  default seccomp profile):
 
   ```sh
-  docker/run.sh 'gcc -O1 -g -fsanitize=address,undefined -I/usr/include/tarantool -pthread test/ipc/ipc_san.c -o /tmp/ipc_san -Wl,--unresolved-symbols=ignore-all && /tmp/ipc_san'
-  docker run --rm --security-opt seccomp=unconfined -v "$PWD":/src -w /src mcc-dev:3.9 sh -c 'gcc -O1 -g -fsanitize=thread -I/usr/include/tarantool -pthread test/ipc/ipc_san.c -o /tmp/ipc_san -Wl,--unresolved-symbols=ignore-all && setarch x86_64 -R /tmp/ipc_san'
+  docker/run.sh test/ipc/san.sh asan
+  docker run --rm --security-opt seccomp=unconfined --user "$(id -u):$(id -g)" -v "$PWD":/src -w /src mcc-dev:3.9 test/ipc/san.sh tsan
   ```
+- The C code builds on Linux and macOS: no Linux-only calls or flags
+  without a fallback (`eventfd`, `MSG_NOSIGNAL`), and the tests name a
+  module `<name>.so` or `<name>.dylib` by `jit.os` (`test/helpers/env.lua`
+  `soext`).
 
 ### Unit and integration tests
 
@@ -258,8 +264,12 @@ working tree: benchmark a copy (`MCC_SRC`). See
 `docker/tt-commit`:
 - `test.yml`: Tarantool 3.9 via `tarantool/setup-tarantool@v4`,
   `tt package build --locked`, luacheck, and `tt test` on `test/unit` and
-  `test/integration`, with the C data path (built with warnings as errors)
-  and once more on the Lua engine only;
+  `test/integration`, with the C data path (built with warnings as errors),
+  once more on the Lua engine only, and the thread suites once more with
+  the pipe wakeups (`-DIPC_WAKEUP_PIPE`); `test/ipc/san.sh` under ASan,
+  UBSan and TSan; and on macOS (`macos-15`, arm64) `tt package build` and
+  `tt test` on `test/unit` and `test/integration`, with the latest
+  Tarantool 3.9 release built from source and cached;
 - `compat.yml`: builds the dev image (with the cached tt) and the compat
   image and runs the compat suite with a short fuzz against memcached
   1.6.45;

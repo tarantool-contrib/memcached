@@ -20,11 +20,15 @@ M.root = fio.abspath(
 -- copies of the Lua files come after the source tree's in every path below,
 -- so the tests run the sources.
 M.rocks = M.root .. '/.rocks'
-M.datapath_so = M.rocks .. '/lib/tarantool/memcached/datapath.so'
+-- The suffix of a C module: Tarantool looks for ?.dylib on macOS, where tt
+-- builds them so, and for ?.so elsewhere.
+M.soext = jit.os == 'OSX' and 'dylib' or 'so'
+M.datapath_so = M.rocks .. '/lib/tarantool/memcached/datapath.' .. M.soext
 
--- A datapath.so or ipc.so in the source tree (an old in-tree build) would
+-- A datapath or ipc module in the source tree (an old in-tree build) would
 -- be found in the search root ahead of the one tt builds.
-for _, so in ipairs({'datapath.so', 'ipc.so'}) do
+for _, name in ipairs({'datapath', 'ipc'}) do
+    local so = name .. '.' .. M.soext
     local stale = M.root .. '/memcached/' .. so
     assert(
         not fio.path.exists(stale),
@@ -38,7 +42,7 @@ end
 -- absolute ones.
 local LUA_PATH = M.root .. '/?.lua;' .. M.root .. '/?/init.lua;' .. M.rocks
     .. '/share/tarantool/?.lua;' .. M.rocks .. '/share/tarantool/?/init.lua;'
-local LUA_CPATH = M.rocks .. '/lib/tarantool/?.so;'
+local LUA_CPATH = M.rocks .. '/lib/tarantool/?.' .. M.soext .. ';'
 if not package.path:find(LUA_PATH, 1, true) then
     package.path = LUA_PATH .. package.path
 end

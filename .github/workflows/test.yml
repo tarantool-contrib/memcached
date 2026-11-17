@@ -1,6 +1,8 @@
 # Lint and the unit and integration tests on Tarantool 3.9 with tt v3: tt
 # builds the package (the C data path) and installs the dev dependencies of
-# app.manifest.toml by its lock into .rocks.
+# app.manifest.toml by its lock into .rocks. On Linux, and on macOS with a
+# Tarantool built from source; memcached/ipc.c also runs under the
+# sanitizers.
 name: test
 
 on:
@@ -54,3 +56,102 @@ jobs:
         env:
           MEMCACHED_DATAPATH: lua
         run: tt test test/unit test/integration -- -v
+
+      # The thread transport with the pipe wakeups macOS has instead of
+      # eventfd (memcached/ipc.c), on the suites that run it. tt rebuilds
+      # the package with these flags, so this step comes last.
+      - name: tt test, the pipe wakeups of macOS
+        env:
+          CFLAGS: -O2 -g -Wall -Wextra -Werror -DIPC_WAKEUP_PIPE
+        run: >-
+          tt test test/integration/threads_test.lua
+          test/integration/readview_test.lua
+          test/integration/reload_test.lua -- -v
+
+  # memcached/ipc.c outside Tarantool (test/ipc/ipc_san.c) under ASan with
+  # UBSan and under TSan, with the eventfd and the pipe wakeups.
+  sanitizers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # module.h.
+      - uses: tarantool/setup-tarantool@v4
+        with:
+          tarantool-version: '3.9'
+
+      - name: ASan and UBSan
+        run: test/ipc/san.sh asan
+
+      - name: TSan
+        run: test/ipc/san.sh tsan
+
+  # macOS (arm64): setup-tarantool has no macOS, so Tarantool is the latest
+  # 3.9 release built from source, cached by its tag and the runner image
+  # (its Homebrew libraries). No lint (the test job has it), no compat and
+  # no benchmarks: they run on Linux only.
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The Tarantool release
+        id: tarantool
+        run: |
+          tag=$(git ls-remote --tags --refs \
+              https://github.com/tarantool/tarantool 'refs/tags/3.9.*' |
+            sed 's|.*refs/tags/||' | grep -E '^3\.9\.[0-9]+$' |
+            sort -V | tail -n 1)
+          test -n "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "image=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-${{ steps.tarantool.outputs.tag }}-${{ steps.tarantool.outputs.image }}-${{ runner.arch }}
+
+      # As tarantool's own macOS workflow builds it, with Homebrew's
+      # OpenSSL 3 (its bundled libcurl doesn't build with OpenSSL 4).
+      - name: Build Tarantool
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          TAG: ${{ steps.tarantool.outputs.tag }}
+        run: |
+          brew install ninja autoconf automake libtool openssl@3
+          git clone -q --depth 1 --branch "$TAG" --recurse-submodules \
+            --shallow-submodules https://github.com/tarantool/tarantool \
+            "$RUNNER_TEMP/tarantool"
+          cmake -S "$RUNNER_TEMP/tarantool" -B "$RUNNER_TEMP/tarantool-build" \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_INSTALL_PREFIX="$HOME/.local/tarantool" \
+            -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+          cmake --build "$RUNNER_TEMP/tarantool-build"
+          cmake --install "$RUNNER_TEMP/tarantool-build"
+
+      - name: Tarantool on PATH
+        run: |
+          echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/tarantool/bin/tarantool" --version
+
+      - uses: ./.github/actions/tt
+
+      # The C modules (.dylib), with warnings as errors.
+      - name: tt package build
+        env:
+          CFLAGS: -O2 -g -Wall -Wextra -Werror
+        run: tt package build --locked
+
+      # macOS allows 256 open files by default; the short /tmp keeps the
+      # unix socket paths under macOS's 104 bytes ($TMPDIR is long).
+      - name: tt test
+        env:
+          CFLAGS: -O2 -g -Wall -Wextra -Werror
+          TMPDIR: /tmp
+        run: |
+          ulimit -n 10240
+          tt test test/unit test/integration -- -v

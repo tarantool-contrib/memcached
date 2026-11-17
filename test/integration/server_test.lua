@@ -85,8 +85,15 @@ g.test_reuseport = function(cg)
         srv.start,
         srv
     )
-    -- With it, both listen.
+    -- With it, both listen. macOS doesn't spread the connections over the
+    -- sockets of a port (README.md, Requirements): one server gets them all.
     start(cg, {backend = fake_backend('b'), reuseport = true})
+    if jit.os == 'OSX' then
+        local c = client.must_connect(cg.port)
+        t.assert_not_equals(c:get('k', 'get'), nil)
+        c:close()
+        return
+    end
     local seen = {}
     t.helpers.retrying({timeout = 10}, function()
         local c = client.must_connect(cg.port)

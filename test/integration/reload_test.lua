@@ -157,9 +157,14 @@ end
 local function resources(cg)
     return cg.server:exec(function()
         local fio_ = require('fio')
+        -- /dev/fd on macOS, which has no /proc.
+        local fd_dir = '/proc/self/fd'
+        if not fio_.path.is_dir(fd_dir) then
+            fd_dir = '/dev/fd'
+        end
         return {
             fibers = require('memcached.reload').fiber_count(),
-            fds = #fio_.listdir('/proc/self/fd'),
+            fds = #fio_.listdir(fd_dir),
         }
     end)
 end

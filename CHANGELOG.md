@@ -203,8 +203,13 @@ data path, distributed as the rock `memcached`.
   `version` reply read it from `memcached/version.lua`, which tt writes
   (`scm` in a source tree tt didn't build).
 - CI workflows: lint and tests on Tarantool 3.9 with the C data path on and
-  off, the compat suite, and the rocks installed into new projects, the
-  source rock alone included (`pack`).
+  off, the tests on macOS, `memcached/ipc.c` under ASan, UBSan and TSan,
+  the compat suite, and the rocks installed into new projects, the source
+  rock alone included (`pack`).
+- Linux and macOS: the thread transport (`memcached/ipc.c`) wakes its
+  consumers with a pipe where there is no eventfd. On macOS the
+  connections of an instance with `threads` are not spread over the
+  threads: `SO_REUSEPORT` there doesn't balance them.
 - The vshard backend supports vshard `>= 1.0.0, < 2.0.0` and logs a
   warning once when the vshard (or vshard-ee) it loads is outside that
   range or has no version.
