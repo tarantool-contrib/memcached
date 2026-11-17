@@ -228,8 +228,11 @@ tg.after_each(function(cg)
     th.destroy(cg.server, 'fe')
 end)
 
--- Connections until both threads have one.
+-- Connections until both threads have one. Skips the test on macOS, which
+-- doesn't spread the connections over the threads (README.md,
+-- Requirements).
 local function connect_all_threads(cg)
+    t.skip_if(jit.os == 'OSX', 'macOS: the connections are not spread')
     local seen, nseen = {}, 0
     local conns = {}
     for _ = 1, 64 do

@@ -194,8 +194,11 @@ local function connect(cg, port)
 end
 
 -- Connections until every thread has one, at most 64. Returns the
--- connections and the thread id of each.
+-- connections and the thread id of each. Skips the test on macOS, which
+-- doesn't spread the connections over the threads (README.md,
+-- Requirements).
 local function connect_all_threads(cg)
+    t.skip_if(jit.os == 'OSX', 'macOS: the connections are not spread')
     local conns, ids = {}, {}
     local seen, nseen = {}, 0
     for _ = 1, 64 do
@@ -253,7 +256,10 @@ g.test_served_by_threads = function(cg)
         end
         used[id] = (used[id] or 0) + 1
     end
-    t.assert_ge(nused, 2, 'the connections are spread over the threads')
+    -- Not on macOS (README.md, Requirements).
+    if jit.os ~= 'OSX' then
+        t.assert_ge(nused, 2, 'the connections are spread over the threads')
+    end
 
     -- TX doesn't listen.
     t.assert_equals(
@@ -751,10 +757,15 @@ g.test_named_router = function(cg)
     t.helpers.retrying({timeout = 10}, function()
         t.assert_equals(c:set(a, 'x'), 'STORED\r\n')
     end)
-    for _, r in ipairs(vt.thread_routers(cluster, 'named')) do
-        t.assert_equals(r.name, 'later')
-        t.assert_equals(r.replicasets, {'rs-1', 'rs-2'})
-    end
+    -- Every thread makes its router from the config TX sends; the set
+    -- went through one of them, the others may still be configuring theirs
+    -- (router:info() raises until then).
+    t.helpers.retrying({timeout = 10}, function()
+        for _, r in ipairs(vt.thread_routers(cluster, 'named')) do
+            t.assert_equals(r.name, 'later')
+            t.assert_equals(r.replicasets, {'rs-1', 'rs-2'})
+        end
+    end)
     -- bro: the plain gets of a thread also reach the replica.
     local replica = cluster['s1-b']
     local r0 = vc.space_info(replica).batches
