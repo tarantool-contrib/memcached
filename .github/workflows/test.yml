@@ -125,6 +125,10 @@ jobs:
           git clone -q --depth 1 --branch "$TAG" --recurse-submodules \
             --shallow-submodules https://github.com/tarantool/tarantool \
             "$RUNNER_TEMP/tarantool"
+          # LuaJIT's CMake takes its version from git describe, which
+          # needs its history and tags.
+          git -C "$RUNNER_TEMP/tarantool/third_party/luajit" fetch -q \
+            --unshallow --tags
           cmake -S "$RUNNER_TEMP/tarantool" -B "$RUNNER_TEMP/tarantool-build" \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
